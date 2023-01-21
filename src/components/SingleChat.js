@@ -8,20 +8,26 @@ import { ArrowBackIcon } from "@chakra-ui/icons";
 import { ChatState } from "../context/chatProvider";
 import { getSender, getSenderFull } from "../config/ChatLogics";
 import ProfileModal from "./miscellaneous/ProfileModal";
-import  UpdateGroupChatModal  from './miscellaneous/UpdateGroupChatModel'
+import UpdateGroupChatModal from './miscellaneous/UpdateGroupChatModel'
 import { useEffect, useState } from "react";
 import ScrollableChat from "./ScrollableChat";
+import io from "socket.io-client";
 
+const ENDPOINT = "http://localhost:5000"; // "https://giga-cell.herokuapp.com"; -> After deployment
+var socket, selectedChatCompare;
 
 const SingleChat = ({ fetchAgain, setFetchAgain, }) => {
-    
+
     const [messages, setMessages] = useState([]);
     const [loading, setLoading] = useState(false);
     const [newMessage, setNewMessage] = useState("");
-    
+    const [socketConnected, setSocketConnected] = useState(false);
+    const [typing, setTyping] = useState(false);
+    const [istyping, setIsTyping] = useState(false);
+
     const toast = useToast();
-    const { selectedChat, setSelectedChat, user } =  ChatState();
-    
+    const { selectedChat, setSelectedChat, user, notification, setNotification } = ChatState();
+
     const fetchMessages = async () => {
         if (!selectedChat) return;
 
@@ -39,11 +45,12 @@ const SingleChat = ({ fetchAgain, setFetchAgain, }) => {
                 config
             );
 
-            console.log('message - data', data);
+          
             setMessages(data);
             setLoading(false);
 
-           
+             socket.emit('join chat',selectedChat._id); 
+
         } catch (error) {
             toast({
                 title: "Error Occured!",
@@ -56,15 +63,41 @@ const SingleChat = ({ fetchAgain, setFetchAgain, }) => {
         }
     };
 
+
+    useEffect(() => {
+        socket = io(ENDPOINT);
+        socket.emit("setup", user);
+        socket.on("connected", () => setSocketConnected(true));
+        socket.on("typing", () => setIsTyping(true));
+        socket.on("stop typing", () => setIsTyping(false));
+
+        // eslint-disable-next-line
+    }, []);
+
     useEffect(() => {
         fetchMessages();
-
+        selectedChatCompare = selectedChat;
         // eslint-disable-next-line
     }, [selectedChat]);
 
-    const sendMessage = async(event) => {
-        if (event.key === "Enter" && newMessage)
-        {
+    useEffect(() => {
+        socket.on("message recieved", (newMessageRecieved) => {
+            if (
+                !selectedChatCompare || // if chat is not selected or doesn't match current chat
+                selectedChatCompare._id !== newMessageRecieved.chat._id
+            ) {
+                if (!notification.includes(newMessageRecieved)) {
+                    setNotification([newMessageRecieved, ...notification]);
+                    setFetchAgain(!fetchAgain);
+                }
+            } else {
+                setMessages([...messages, newMessageRecieved]);
+            }
+        });
+    });
+
+    const sendMessage = async (event) => {
+        if (event.key === "Enter" && newMessage) {
             try {
                 const config = {
                     headers: {
@@ -81,7 +114,7 @@ const SingleChat = ({ fetchAgain, setFetchAgain, }) => {
                     },
                     config
                 );
-                 
+                socket.emit("new message", data);         
                 setMessages([...messages, data]);
             } catch (error) {
                 toast({
@@ -95,7 +128,9 @@ const SingleChat = ({ fetchAgain, setFetchAgain, }) => {
             }
         }
     }
-    const typingHandler = (e) => {setNewMessage(e.target.value) }
+
+
+    const typingHandler = (e) => { setNewMessage(e.target.value) }
 
     return (
         <>
@@ -117,22 +152,22 @@ const SingleChat = ({ fetchAgain, setFetchAgain, }) => {
                             onClick={() => setSelectedChat("")}
                         />
                         {!selectedChat.isGroupChat ? (
-                                <>
-                                    {getSender(user, selectedChat.users)}
-                                    <ProfileModal
+                            <>
+                                {getSender(user, selectedChat.users)}
+                                <ProfileModal
                                     user={getSenderFull(user, selectedChat.users)}
-                                    />
-                                </>
-                            ) : (
-                                <>
-                                    {selectedChat.chatName.toUpperCase()}
-                                    <UpdateGroupChatModal 
-                                         fetchMessages={fetchMessages}
-                                        fetchAgain={fetchAgain}
-                                        setFetchAgain={setFetchAgain}
-                                    />
-                                </>
-                            )}
+                                />
+                            </>
+                        ) : (
+                            <>
+                                {selectedChat.chatName.toUpperCase()}
+                                <UpdateGroupChatModal
+                                    fetchMessages={fetchMessages}
+                                    fetchAgain={fetchAgain}
+                                    setFetchAgain={setFetchAgain}
+                                />
+                            </>
+                        )}
                     </Text>
                     <Box
                         display="flex"
@@ -170,12 +205,12 @@ const SingleChat = ({ fetchAgain, setFetchAgain, }) => {
                                 placeholder="Enter a message.."
                                 value={newMessage}
                                 onChange={typingHandler}
-                            />       
+                            />
                         </FormControl>
 
                     </Box>
                 </>
-            ) : ( <Box display="flex" alignItems="center" justifyContent="center" h="100%">
+            ) : (<Box display="flex" alignItems="center" justifyContent="center" h="100%">
                 <Text fontSize="3xl" pb={3} fontFamily="Work sans">
                     Click on a user to start chatting
                 </Text>
